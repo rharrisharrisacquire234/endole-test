@@ -1,6 +1,7 @@
 import os
 import asyncio
 import time
+import re
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 import gspread
@@ -54,6 +55,46 @@ def create_endole_slug(company_name):
         .replace("'", "")
         .replace(" ", "-")
     )
+
+
+def convert_value(value):
+    """
+    Converts Endole financial values to plain integers.
+    - 'Unreported' or 'N/A' -> 0
+    - '£36.84M'             -> 36840000
+    - '£498.42K'            -> 498420
+    - '-£1.14M'             -> -1140000
+    - '£16.24B'             -> 16240000000
+    - Plain numbers         -> as integer
+    """
+    if not value or value.strip().lower() in ("unreported", "n/a", ""):
+        return 0
+
+    value = value.strip()
+
+    # Check for negative
+    is_negative = value.startswith("-")
+
+    # Remove £, -, + signs
+    cleaned = re.sub(r"[£\-\+]", "", value).strip()
+
+    # Extract numeric part and suffix
+    match = re.match(r"^([\d,]+\.?\d*)([KMBkmb]?)$", cleaned)
+    if not match:
+        return value  # Return as-is if format is unrecognised
+
+    number = float(match.group(1).replace(",", ""))
+    suffix = match.group(2).upper()
+
+    multipliers = {
+        "K": 1_000,
+        "M": 1_000_000,
+        "B": 1_000_000_000,
+        "":  1
+    }
+
+    result = int(number * multipliers.get(suffix, 1))
+    return -result if is_negative else result
 
 
 async def scrape_company_data(page, reg_number, company_slug):
@@ -157,11 +198,20 @@ async def main():
 
                 row_number = idx + 2
 
-                updates.append({"range": f"{chr(65 + turnover_idx)}{row_number}", "values": [[turnover]]})
-                updates.append({"range": f"{chr(65 + employee_idx)}{row_number}", "values": [[emp_size]]})
-                updates.append({"range": f"{chr(65 + total_assets_idx)}{row_number}", "values": [[total_assets]]})
-                updates.append({"range": f"{chr(65 + total_liabilities_idx)}{row_number}", "values": [[total_liabilities]]})
-                updates.append({"range": f"{chr(65 + net_assets_idx)}{row_number}", "values": [[net_assets]]})
+                # Convert financial values to plain integers
+                turnover_converted       = convert_value(turnover)
+                total_assets_converted   = convert_value(total_assets)
+                total_liab_converted     = convert_value(total_liabilities)
+                net_assets_converted     = convert_value(net_assets)
+
+                # Employee Size: keep as-is (already a plain number), just handle N/A
+                emp_converted = 0 if emp_size in ("N/A", "", None) else emp_size
+
+                updates.append({"range": f"{chr(65 + turnover_idx)}{row_number}",          "values": [[turnover_converted]]})
+                updates.append({"range": f"{chr(65 + employee_idx)}{row_number}",          "values": [[emp_converted]]})
+                updates.append({"range": f"{chr(65 + total_assets_idx)}{row_number}",      "values": [[total_assets_converted]]})
+                updates.append({"range": f"{chr(65 + total_liabilities_idx)}{row_number}", "values": [[total_liab_converted]]})
+                updates.append({"range": f"{chr(65 + net_assets_idx)}{row_number}",        "values": [[net_assets_converted]]})
 
                 print(f"📝 Queued update for row {row_number}")
 
