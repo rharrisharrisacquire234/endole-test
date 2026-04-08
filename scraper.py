@@ -67,62 +67,47 @@ async def scrape_company_data(page, reg_number, company_slug):
     turnover, employees = "N/A", "N/A"
     total_assets, total_liabilities, net_assets = "N/A", "N/A", "N/A"
 
-    # --- Scrape Turnover & Employees from financials iframe ---
     try:
         fin_frame = next((f for f in page.frames if "tile=financials" in f.url), None)
 
         if fin_frame:
-            t_elem = fin_frame.locator("//div[contains(text(),'Turnover')]/following-sibling::div")
-            if await t_elem.count() > 0:
-                turnover = (await t_elem.first.text_content() or "").strip()
-
-            e_elem = fin_frame.locator("//div[contains(text(),'Employees')]/following-sibling::div")
-            if await e_elem.count() > 0:
-                employees = (await e_elem.first.text_content() or "").strip()
-
-    except Exception as e:
-        print(f"⚠️ Error scraping turnover/employees: {e}")
-
-    # --- Scrape Total Assets, Total Liabilities, Net Assets from financials iframe ---
-    try:
-        fin_frame = next((f for f in page.frames if "tile=financials" in f.url), None)
-
-        if fin_frame:
-            # Wait for financial figures to load
             await fin_frame.wait_for_load_state("domcontentloaded")
 
-            ta_elem = fin_frame.locator("//div[contains(text(),'Total Assets')]/following-sibling::div")
-            if await ta_elem.count() > 0:
-                total_assets = (await ta_elem.first.text_content() or "").strip()
+            fields = {
+                "Turnover": None,
+                "Employees": None,
+                "Total Assets": None,
+                "Total Liabilities": None,
+                "Net Assets": None,
+            }
 
-            tl_elem = fin_frame.locator("//div[contains(text(),'Total Liabilities')]/following-sibling::div")
-            if await tl_elem.count() > 0:
-                total_liabilities = (await tl_elem.first.text_content() or "").strip()
+            # Get all items in one pass
+            items = fin_frame.locator("div.item")
+            count = await items.count()
 
-            na_elem = fin_frame.locator("//div[contains(text(),'Net Assets')]/following-sibling::div")
-            if await na_elem.count() > 0:
-                net_assets = (await na_elem.first.text_content() or "").strip()
+            for i in range(count):
+                item = items.nth(i)
+                label_el = item.locator("div.heading.-size-s")
+                value_el = item.locator("div.heading.-size-l")
+
+                if await label_el.count() > 0 and await value_el.count() > 0:
+                    label = (await label_el.first.text_content() or "").strip()
+                    value = (await value_el.first.text_content() or "").strip()
+
+                    if label in fields:
+                        fields[label] = value
+
+            turnover = fields["Turnover"] or "N/A"
+            employees = fields["Employees"] or "N/A"
+            total_assets = fields["Total Assets"] or "N/A"
+            total_liabilities = fields["Total Liabilities"] or "N/A"
+            net_assets = fields["Net Assets"] or "N/A"
+
+        else:
+            print("⚠️ Financials iframe not found")
 
     except Exception as e:
-        print(f"⚠️ Error scraping assets/liabilities: {e}")
-
-    # --- Fallback: scrape from main page if iframe didn't return values ---
-    if total_assets == "N/A" or total_liabilities == "N/A" or net_assets == "N/A":
-        try:
-            ta_elem = page.locator("//p[contains(text(),'Total Assets')]/following-sibling::p | //div[contains(text(),'Total Assets')]/following-sibling::div[contains(@class,'value')]")
-            if await ta_elem.count() > 0:
-                total_assets = (await ta_elem.first.text_content() or "").strip()
-
-            tl_elem = page.locator("//p[contains(text(),'Total Liabilities')]/following-sibling::p | //div[contains(text(),'Total Liabilities')]/following-sibling::div[contains(@class,'value')]")
-            if await tl_elem.count() > 0:
-                total_liabilities = (await tl_elem.first.text_content() or "").strip()
-
-            na_elem = page.locator("//p[contains(text(),'Net Assets')]/following-sibling::p | //div[contains(text(),'Net Assets')]/following-sibling::div[contains(@class,'value')]")
-            if await na_elem.count() > 0:
-                net_assets = (await na_elem.first.text_content() or "").strip()
-
-        except Exception as e:
-            print(f"⚠️ Fallback scrape error: {e}")
+        print(f"⚠️ Error scraping financials: {e}")
 
     print(f"✅ Scraped → Turnover: {turnover}, Employees: {employees}, Total Assets: {total_assets}, Total Liabilities: {total_liabilities}, Net Assets: {net_assets}")
     return turnover, employees, total_assets, total_liabilities, net_assets
